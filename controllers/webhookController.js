@@ -200,7 +200,11 @@ class WebhookController {
           account_found: "false",
           found_account: "false",
           api_success: "false",
-          message: 'Account not found.'
+          message: 'Account not found.',
+          debug_received_body: JSON.stringify(req.body),
+          debug_received_query: JSON.stringify(req.query),
+          debug_raw_str: rawStr,
+          debug_cleaned: rawAcc
         });
       }
 
