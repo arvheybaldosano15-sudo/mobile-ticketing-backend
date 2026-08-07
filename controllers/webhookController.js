@@ -199,7 +199,10 @@ class WebhookController {
           success: false,
           account_found: "false",
           found_account: "false",
+          is_account_found: false,
+          is_found: false,
           api_success: "false",
+          status: "failed",
           message: 'Account not found.'
         });
       }
@@ -209,15 +212,19 @@ class WebhookController {
         success: true,
         account_found: "true",
         found_account: "true",
-        api_success: "true",
+        is_account_found: true,
         is_found: true,
+        api_success: "true",
+        status: "success",
         message: 'Account found successfully.',
         data: {
           customer_id: customer.id,
           full_name: customer.full_name,
           account_number: customer.account_number,
           account_found: "true",
-          found_account: "true"
+          found_account: "true",
+          is_account_found: true,
+          is_found: true
         }
       });
     } catch (error) {
