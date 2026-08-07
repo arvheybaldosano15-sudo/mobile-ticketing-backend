@@ -33,8 +33,9 @@ class Customer {
   }
 
   static async update(id, data) {
-    const { full_name, complete_address, nearby_landmark, contact_number } = data;
+    const { full_name, complete_address, nearby_landmark, contact_number, account_number } = data;
     const updates = {
+      ...(account_number !== undefined && { account_number }),
       ...(full_name !== undefined && { full_name }),
       ...(complete_address !== undefined && { complete_address }),
       ...(nearby_landmark !== undefined && { nearby_landmark }),
@@ -104,6 +105,35 @@ class Customer {
 
     if (error) throw error;
     return !!data;
+  }
+
+  static async delete(id) {
+    // 1. Get all tickets for this customer
+    const { data: tickets } = await supabase
+      .from('tickets')
+      .select('id')
+      .eq('customer_id', id);
+
+    if (tickets && tickets.length > 0) {
+      const ticketIds = tickets.map(t => t.id);
+      // Delete ticket updates & attachments
+      await supabase.from('ticket_updates').delete().in('ticket_id', ticketIds);
+      await supabase.from('ticket_attachments').delete().in('ticket_id', ticketIds);
+      // Delete tickets
+      await supabase.from('tickets').delete().eq('customer_id', id);
+    }
+
+    // 2. Delete customer services
+    await supabase.from('customer_services').delete().eq('customer_id', id);
+
+    // 3. Delete customer
+    const { error } = await supabase
+      .from('customers')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    return true;
   }
 }
 

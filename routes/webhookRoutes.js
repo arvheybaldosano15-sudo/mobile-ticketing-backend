@@ -4,5 +4,6 @@ const webhookController = require('../controllers/webhookController');
 
 // Public route — no JWT needed, uses x-api-key header for security instead
 router.post('/botcake', webhookController.handleBotcake);
+router.post('/botcake/verify', webhookController.verifyAccount);
 
 module.exports = router;

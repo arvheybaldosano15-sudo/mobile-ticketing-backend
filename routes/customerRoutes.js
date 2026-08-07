@@ -15,5 +15,6 @@ router.get('/:id/tickets', customerController.getCustomerTickets);
 // Create/Update require Admin role based on requirements (only admin adds customers)
 router.post('/', requireAdmin, createAuditLogger('CREATE_CUSTOMER', 'Customer', 'id'), customerController.createCustomer);
 router.put('/:id', requireAdmin, createAuditLogger('UPDATE_CUSTOMER', 'Customer', 'id'), customerController.updateCustomer);
+router.delete('/:id', requireAdmin, createAuditLogger('DELETE_CUSTOMER', 'Customer', 'id'), customerController.deleteCustomer);
 
 module.exports = router;

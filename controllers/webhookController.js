@@ -28,54 +28,44 @@ class WebhookController {
       } = req.body;
 
       // ── 2. Validate required fields ────────────────────────────────────────
-      if (!messenger_psid || !full_name || !subject) {
+      if (!account_number) {
         return res.status(400).json({
           success: false,
-          message: 'Missing required fields: messenger_psid, full_name, subject.'
+          message: 'Account number is required to create a ticket.'
         });
       }
 
-      // ── 3. Find or Create Customer ─────────────────────────────────────────
-      let customer = null;
+      // Auto-generate subject if not provided
+      const ticketSubject = subject || (description ? description.substring(0, 80) : 'Support Request from Messenger');
+      const customerId = messenger_psid || `fb_${Date.now()}`;
 
-      // Try to find existing customer by messenger PSID
-      const { data: existing } = await supabase
+      const cleanAcc = String(account_number).replace(/['"]+/g, '').trim();
+
+      // ── 3. Find Customer by Account Number ONLY ────────────────────────────
+      const { data: customer } = await supabase
         .from('customers')
         .select('*')
-        .eq('messenger_psid', messenger_psid)
+        .ilike('account_number', cleanAcc)
         .maybeSingle();
 
-      if (existing) {
-        customer = existing;
-        // Update contact info if provided
-        const updates = {};
-        if (full_name)        updates.full_name = full_name;
-        if (contact_number)   updates.contact_number = contact_number;
-        if (complete_address) updates.complete_address = complete_address;
-        if (nearby_landmark)  updates.nearby_landmark = nearby_landmark;
-        if (Object.keys(updates).length > 0) {
-          await supabase.from('customers').update(updates).eq('id', customer.id);
-        }
-      } else {
-        // Create a new customer record
-        const { data: newCustomer, error: createErr } = await supabase
-          .from('customers')
-          .insert({
-            messenger_psid,
-            full_name:        full_name || 'Unknown',
-            contact_number:   contact_number || null,
-            complete_address: complete_address || null,
-            nearby_landmark:  nearby_landmark || null,
-            account_number:   account_number || null,
-          })
-          .select()
-          .single();
-
-        if (createErr) throw createErr;
-        customer = newCustomer;
+      // If account number not found — reject and do NOT create ticket
+      if (!customer) {
+        return res.status(404).json({
+          success: false,
+          message: 'Account not found. Please check your Account Number and try again.',
+          data: { account_number }
+        });
       }
 
-      // ── 4. Resolve Service Category (optional) ─────────────────────────────
+      // Customer found — update their messenger_psid and fill in any missing info
+      const updates = { messenger_psid: customerId };
+      if (full_name && !customer.full_name)           updates.full_name = full_name;
+      if (contact_number && !customer.contact_number) updates.contact_number = contact_number;
+      if (complete_address && !customer.complete_address) updates.complete_address = complete_address;
+      if (nearby_landmark && !customer.nearby_landmark)   updates.nearby_landmark = nearby_landmark;
+      await supabase.from('customers').update(updates).eq('id', customer.id);
+
+      // ── 4. Resolve Service Category ─────────────────────────────
       let service_category_id = null;
       if (category) {
         const { data: cat } = await supabase
@@ -86,12 +76,22 @@ class WebhookController {
         service_category_id = cat?.id || null;
       }
 
+      // Fallback to first available category if not specified or not matched
+      if (!service_category_id) {
+        const { data: defaultCat } = await supabase
+          .from('service_categories')
+          .select('id')
+          .limit(1)
+          .single();
+        service_category_id = defaultCat?.id;
+      }
+
       // ── 5. Create Ticket ───────────────────────────────────────────────────
       const ticket = await Ticket.create({
         customer_id:         customer.id,
         service_category_id: service_category_id,
-        priority:            'normal',
-        subject:             subject,
+        priority:            'medium',
+        subject:             ticketSubject,
         description:         description || null,
         source:              'messenger',
       });
@@ -101,10 +101,12 @@ class WebhookController {
         success: true,
         message: 'Ticket created successfully.',
         data: {
-          ticket_number: ticket.ticket_number,
-          ticket_id:     ticket.id,
-          customer_id:   customer.id,
-          status:        ticket.status
+          ticket_number:  ticket.ticket_number,
+          ticket_id:      ticket.id,
+          customer_id:    customer.id,
+          customer_name:  customer.full_name,
+          account_number: customer.account_number,
+          status:         ticket.status
         }
       });
 
@@ -112,6 +114,119 @@ class WebhookController {
       console.error('[Botcake Webhook Error]', error);
       return res.status(500).json({
         success: false,
+        message: 'Internal server error.',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * POST /api/webhooks/botcake/verify
+   * Checks if an account_number exists in Supabase.
+   */
+  async verifyAccount(req, res) {
+    try {
+      console.log('[BOTCAKE VERIFY INCOMING BODY]:', req.body);
+      console.log('[BOTCAKE VERIFY INCOMING QUERY]:', req.query);
+      const apiKey = req.headers['x-api-key'];
+      if (!apiKey || apiKey !== process.env.BOTCAKE_API_KEY) {
+        return res.status(401).json({ success: false, message: 'Unauthorized: Invalid API key.' });
+      }
+
+      // Read from BOTH req.body (Body tab) and req.query (Params tab)
+      const account_number = req.body.account_number || req.query.account_number;
+      const messenger_psid = req.body.messenger_psid || req.query.messenger_psid;
+      
+      // Detect unresolved Botcake template variables like {{account_number}} or {{user.account_number}}
+      const rawStr = account_number ? String(account_number) : '';
+      const isUnresolved = rawStr.includes('{{') || rawStr.includes('}}') || rawStr.includes('user.') || rawStr === 'account_number';
+      
+      if (isUnresolved) {
+        console.log(`[BOTCAKE VERIFY WARNING]: Received UNRESOLVED template variable: "${rawStr}". Botcake is NOT substituting the variable.`);
+      }
+
+      // Clean rawAcc: extract ONLY digits (handles any wrapper characters)
+      let rawAcc = rawStr.replace(/[^0-9]/g, '').trim();
+
+      console.log(`[BOTCAKE VERIFY QUERY PARAMS]: rawStr="${rawStr}", rawAcc="${rawAcc}", psid="${messenger_psid}", unresolved=${isUnresolved}`);
+
+      if (!rawAcc && !messenger_psid) {
+        return res.status(400).json({
+          success: false,
+          account_found: "false",
+          found_account: "false",
+          api_success: "false",
+          message: 'Account number or PSID required.'
+        });
+      }
+
+      let customer = null;
+
+      // 1. Search by account_number (exact ilike)
+      if (rawAcc) {
+        const { data } = await supabase
+          .from('customers')
+          .select('id, full_name, account_number')
+          .ilike('account_number', rawAcc)
+          .maybeSingle();
+        customer = data;
+      }
+
+      // 2. Fallback: Search by substring if exact match yielded nothing (e.g. user typed ACC-11110)
+      if (!customer && rawAcc && rawAcc.length >= 3) {
+        const { data } = await supabase
+          .from('customers')
+          .select('id, full_name, account_number')
+          .ilike('account_number', `%${rawAcc}%`)
+          .limit(1)
+          .maybeSingle();
+        customer = data;
+      }
+
+      // 3. Fallback: Search by messenger_psid if account_number lookup yielded no result
+      if (!customer && messenger_psid) {
+        const { data } = await supabase
+          .from('customers')
+          .select('id, full_name, account_number')
+          .eq('messenger_psid', messenger_psid)
+          .maybeSingle();
+        customer = data;
+      }
+
+      if (!customer) {
+        console.log(`[BOTCAKE VERIFY]: Account NOT found for rawAcc="${rawAcc}", psid="${messenger_psid}"`);
+        return res.status(200).json({
+          success: false,
+          account_found: "false",
+          found_account: "false",
+          api_success: "false",
+          message: 'Account not found.'
+        });
+      }
+
+      console.log(`[BOTCAKE VERIFY SUCCESS]: Account found for customer="${customer.full_name}" (${customer.account_number})`);
+      return res.status(200).json({
+        success: true,
+        account_found: "true",
+        found_account: "true",
+        api_success: "true",
+        is_found: true,
+        message: 'Account found successfully.',
+        data: {
+          customer_id: customer.id,
+          full_name: customer.full_name,
+          account_number: customer.account_number,
+          account_found: "true",
+          found_account: "true"
+        }
+      });
+    } catch (error) {
+      console.error('[Botcake Verify Error]', error);
+      return res.status(500).json({
+        success: false,
+        account_found: "false",
+        found_account: "false",
+        api_success: "false",
         message: 'Internal server error.',
         error: error.message
       });

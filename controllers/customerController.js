@@ -126,6 +126,20 @@ class CustomerController {
       return serverError(res, error);
     }
   }
+
+  async deleteCustomer(req, res) {
+    try {
+      const customer = await Customer.findById(req.params.id);
+      if (!customer) {
+        return notFound(res, 'Customer not found');
+      }
+
+      await Customer.delete(req.params.id);
+      return successResponse(res, 200, 'Customer deleted successfully');
+    } catch (error) {
+      return serverError(res, error);
+    }
+  }
 }
 
 module.exports = new CustomerController();
