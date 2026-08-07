@@ -120,16 +120,38 @@ class WebhookController {
     }
   }
 
+// In-memory log buffer for live debugging
+const recentLogs = [];
+
+class WebhookController {
+  getDebugLogs(req, res) {
+    return res.status(200).json({ success: true, count: recentLogs.length, logs: recentLogs });
+  }
+
   /**
    * POST /api/webhooks/botcake/verify
    * Checks if an account_number exists in Supabase.
    */
   async verifyAccount(req, res) {
     try {
+      const timestamp = new Date().toISOString();
+      const logEntry = {
+        timestamp,
+        method: req.method,
+        query: req.query,
+        body: req.body,
+        headers: { 'x-api-key': req.headers['x-api-key'] }
+      };
+      recentLogs.unshift(logEntry);
+      if (recentLogs.length > 20) recentLogs.pop();
+
       console.log('[BOTCAKE VERIFY INCOMING BODY]:', req.body);
       console.log('[BOTCAKE VERIFY INCOMING QUERY]:', req.query);
       const apiKey = req.headers['x-api-key'];
-      console.log('[BOTCAKE VERIFY HEADER x-api-key]:', apiKey);
+      if (!apiKey || apiKey !== process.env.BOTCAKE_API_KEY) {
+        logEntry.error = 'Unauthorized: Invalid API key.';
+        return res.status(401).json({ success: false, message: 'Unauthorized: Invalid API key.' });
+      }
 
       // 1. Scan req.body and req.query exhaustively for any account_number or raw digits
       const fullPayloadString = JSON.stringify({ body: req.body, query: req.query });

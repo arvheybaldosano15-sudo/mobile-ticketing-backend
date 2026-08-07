@@ -6,5 +6,6 @@ const webhookController = require('../controllers/webhookController');
 router.post('/botcake', webhookController.handleBotcake);
 router.post('/botcake/verify', webhookController.verifyAccount);
 router.get('/botcake/verify', webhookController.verifyAccount);
+router.get('/botcake/debug-logs', webhookController.getDebugLogs);
 
 module.exports = router;
