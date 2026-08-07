@@ -133,32 +133,23 @@ class WebhookController {
         return res.status(401).json({ success: false, message: 'Unauthorized: Invalid API key.' });
       }
 
-      // Read from BOTH req.body (Body tab) and req.query (Params tab)
-      const account_number = req.body.account_number || req.query.account_number;
-      const messenger_psid = req.body.messenger_psid || req.query.messenger_psid;
+      // 1. Scan req.body and req.query exhaustively for any account_number or raw digits
+      const fullPayloadString = JSON.stringify({ body: req.body, query: req.query });
+      console.log('[BOTCAKE VERIFY FULL PAYLOAD]:', fullPayloadString);
+
+      let account_number = req.body?.account_number || req.query?.account_number || req.body?.account || req.query?.account;
+      const messenger_psid = req.body?.messenger_psid || req.query?.messenger_psid || req.body?.user_id || req.query?.user_id;
+
+      // Extract all numeric sequences (3-10 digits) from the entire payload string
+      const matchedDigits = fullPayloadString.match(/\b\d{3,10}\b/g) || [];
       
-      // Detect unresolved Botcake template variables like {{account_number}} or {{user.account_number}}
-      const rawStr = account_number ? String(account_number) : '';
-      const isUnresolved = rawStr.includes('{{') || rawStr.includes('}}') || rawStr.includes('user.') || rawStr === 'account_number';
-      
-      if (isUnresolved) {
-        console.log(`[BOTCAKE VERIFY WARNING]: Received UNRESOLVED template variable: "${rawStr}". Botcake is NOT substituting the variable.`);
+      let rawAcc = account_number ? String(account_number).replace(/[^0-9]/g, '').trim() : '';
+      if (!rawAcc && matchedDigits.length > 0) {
+        // Use the first numeric string found in payload that isn't a timestamp/key
+        rawAcc = matchedDigits.find(d => d.length >= 4 && d.length <= 8) || matchedDigits[0];
       }
 
-      // Clean rawAcc: extract ONLY digits (handles any wrapper characters)
-      let rawAcc = rawStr.replace(/[^0-9]/g, '').trim();
-
-      console.log(`[BOTCAKE VERIFY QUERY PARAMS]: rawStr="${rawStr}", rawAcc="${rawAcc}", psid="${messenger_psid}", unresolved=${isUnresolved}`);
-
-      if (!rawAcc && !messenger_psid) {
-        return res.status(400).json({
-          success: false,
-          account_found: "false",
-          found_account: "false",
-          api_success: "false",
-          message: 'Account number or PSID required.'
-        });
-      }
+      console.log(`[BOTCAKE VERIFY QUERY PARAMS]: rawAcc="${rawAcc}", psid="${messenger_psid}"`);
 
       let customer = null;
 
@@ -166,17 +157,17 @@ class WebhookController {
       if (rawAcc) {
         const { data } = await supabase
           .from('customers')
-          .select('id, full_name, account_number')
+          .select('id, full_name, account_number, messenger_psid')
           .ilike('account_number', rawAcc)
           .maybeSingle();
         customer = data;
       }
 
-      // 2. Fallback: Search by substring if exact match yielded nothing (e.g. user typed ACC-11110)
+      // 2. Fallback: Search by substring if exact match yielded nothing
       if (!customer && rawAcc && rawAcc.length >= 3) {
         const { data } = await supabase
           .from('customers')
-          .select('id, full_name, account_number')
+          .select('id, full_name, account_number, messenger_psid')
           .ilike('account_number', `%${rawAcc}%`)
           .limit(1)
           .maybeSingle();
@@ -187,10 +178,15 @@ class WebhookController {
       if (!customer && messenger_psid) {
         const { data } = await supabase
           .from('customers')
-          .select('id, full_name, account_number')
-          .eq('messenger_psid', messenger_psid)
+          .select('id, full_name, account_number, messenger_psid')
+          .eq('messenger_psid', String(messenger_psid))
           .maybeSingle();
         customer = data;
+      }
+
+      // If customer found and PSID provided, persist PSID to customer record for seamless future lookups
+      if (customer && messenger_psid && customer.messenger_psid !== String(messenger_psid)) {
+        await supabase.from('customers').update({ messenger_psid: String(messenger_psid) }).eq('id', customer.id);
       }
 
       if (!customer) {
