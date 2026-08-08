@@ -40,6 +40,11 @@ app.use(express.urlencoded({ extended: true }));
 // Serve static uploads
 app.use('/uploads', express.static('uploads'));
 
+// Health check endpoint (for UptimeRobot keep-alive pings)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Routes
 app.use('/api', routes);
 
