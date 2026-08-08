@@ -255,6 +255,7 @@ class WebhookController {
         return res.status(200).json({
           success: false,
           account_found: "false",
+          account_foun: "false",
           found_account: "false",
           is_account_found: false,
           is_found: false,
@@ -269,6 +270,7 @@ class WebhookController {
       return res.status(200).json({
         success: true,
         account_found: "true",
+        account_foun: "true",
         found_account: "true",
         is_account_found: true,
         is_found: true,
@@ -280,6 +282,7 @@ class WebhookController {
           full_name: customer.full_name,
           account_number: customer.account_number,
           account_found: "true",
+          account_foun: "true",
           found_account: "true",
           is_account_found: true,
           is_found: true
